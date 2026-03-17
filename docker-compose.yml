@@ -1,0 +1,63 @@
+version: '3.8'
+
+networks:
+  # Red aislada para el experimento
+  gaia_lab_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24
+
+services:
+  # CAPA DE SEGURIDAD 1: Firewall / Gateway
+  # Este contenedor centraliza el tráfico antes de enviarlo al Apache
+  firewall_gateway:
+    image: alpine
+    container_name: gaia_firewall
+    cap_add:
+      - NET_ADMIN  # Necesario para manipular iptables
+    command: /bin/sh -c "apk add iptables && tail -f /dev/null"
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.5
+
+  # CAPA DE SEGURIDAD 2: Antivirus (Escáner de Archivos)
+  antivirus:
+    image: clamav/clamav:latest
+    container_name: gaia_antivirus
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.30
+    # Este servicio estará "escuchando" peticiones de escaneo
+
+  # LA VÍCTIMA (Apache)
+  victima_apache:
+    image: httpd:2.4-alpine
+    container_name: victima_apache
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.10
+    ports:
+      - "8080:80"
+    volumes:
+      - ./uploads:/usr/local/apache2/htdocs/uploads # Carpeta compartida para escaneo
+
+  # HONEYPOT: Cowrie (Simula SSH vulnerable)
+  honeypot:
+    image: cowrie/cowrie:latest
+    container_name: honeypot_gaia
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.20
+    ports:
+      - "2222:2222"
+
+  # IDS: Aquí es donde integrarás el código del profesor
+  # Por ahora usamos una imagen de herramientas de red para pruebas
+  ids_gaia:
+    image: nicolaka/netshoot
+    container_name: ids_gaia
+    network_mode: "service:victima_apache" # COMPARTE RED CON LA VÍCTIMA
+    command: tail -f /dev/null
+    depends_on:
+      - victima_apache
