@@ -57,7 +57,7 @@ services:
   ids_gaia:
     image: nicolaka/netshoot
     container_name: ids_gaia
-    network_mode: "service:victima_apache" # COMPARTE RED CON LA VÍCTIMA
-    command: tail -f /dev/null
+    network_mode: "service:victima_apache"
     depends_on:
       - victima_apache
+    command: ["tail", "-f", "/dev/null"]
