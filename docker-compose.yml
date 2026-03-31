@@ -11,7 +11,14 @@ services:
     container_name: gaia_firewall
     cap_add:
       - NET_ADMIN
-    command: sh -c "apk add --no-cache iptables && tail -f /dev/null"
+    security_opt:
+      - no-new-privileges:true
+    command: >
+      sh -c "apk add --no-cache iptables &&
+             iptables -P INPUT ACCEPT &&
+             iptables -P FORWARD ACCEPT &&
+             iptables -P OUTPUT ACCEPT &&
+             tail -f /dev/null"
     networks:
       gaia_lab_net:
         ipv4_address: 10.5.0.5
@@ -19,6 +26,8 @@ services:
   gaia_antivirus:
     image: clamav/clamav:latest
     container_name: gaia_antivirus
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./html:/scandir:ro
     networks:
@@ -27,8 +36,14 @@ services:
   victima_apache:
     image: httpd:2.4-alpine
     container_name: victima_apache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     volumes:
-      - ./html:/usr/local/apache2/htdocs/
+      - ./html:/usr/local/apache2/htdocs/:ro
     ports:
       - "8080:80"
     networks:
@@ -38,6 +53,8 @@ services:
   honeypot_gaia:
     image: cowrie/cowrie:latest
     container_name: honeypot_gaia
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "2222:2222"
     networks:
