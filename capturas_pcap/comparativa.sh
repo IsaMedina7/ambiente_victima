@@ -1,37 +1,54 @@
 #!/bin/bash
 
-# Ajusta los nombres a tus archivos reales
-CAP_SIN="ataque_goldeneye_def.pcap"
-CAP_CON="ataque_goldeneye_seg.pcap"
+CAP_SIN="control_normal_def.pcap"
+CAP_CON="control_normal_seg.pcap"
 
 echo "-------------------------------------------------------"
-echo "ANÁLISIS DE MITIGACIÓN DDOS - PROYECTO GAIA"
+echo "ANÁLISIS DE TRÁFICO - PROYECTO GAIA"
 echo "-------------------------------------------------------"
 
-# 1. Contar paquetes totales dirigidos AL servidor (Entrada)
-TOTAL_SIN=$(tshark -r "$CAP_SIN" -Y "tcp.port == 80" 2>/dev/null | wc -l)
-TOTAL_CON=$(tshark -r "$CAP_CON" -Y "tcp.port == 80" 2>/dev/null | wc -l)
+analizar() {
+  FILE=$1
 
-# 2. Contar paquetes que el SERVIDOR envió de vuelta (Salida/Respuesta)
-# Si el servidor responde mucho, es que el ataque lo está procesando.
-RESP_SIN=$(tshark -r "$CAP_SIN" -Y "tcp.srcport == 80" 2>/dev/null | wc -l)
-RESP_CON=$(tshark -r "$CAP_CON" -Y "tcp.srcport == 80" 2>/dev/null | wc -l)
+  SYN=$(tshark -r "$FILE" -Y "tcp.flags.syn==1 && tcp.flags.ack==0 && tcp.dstport==80" 2>/dev/null | wc -l)
+  SYNACK=$(tshark -r "$FILE" -Y "tcp.flags.syn==1 && tcp.flags.ack==1 && tcp.srcport==80" 2>/dev/null | wc -l)
+  HTTP=$(tshark -r "$FILE" -Y "http.request" 2>/dev/null | wc -l)
 
-echo "Escenario         | Tramas Totales | Respuestas Servidor | Eficacia"
-echo "------------------|----------------|---------------------|-----------"
+  echo "$SYN;$SYNACK;$HTTP"
+}
 
-# Datos Sin Seguridad
-echo "Sin Seguridad     | $TOTAL_SIN          | $RESP_SIN                | 0%"
+DATA_SIN=$(analizar "$CAP_SIN")
+DATA_CON=$(analizar "$CAP_CON")
 
-# Cálculo de Mitigación (Cuanto tráfico se evitó que llegara al puerto 80)
-DIFERENCIA=$((TOTAL_SIN - TOTAL_CON))
-if [ "$TOTAL_SIN" -gt 0 ]; then
-  EFICACIA=$(echo "scale=2; ($DIFERENCIA / $TOTAL_SIN) * 100" | bc)
+IFS=";" read SYN_SIN SYNACK_SIN HTTP_SIN <<<"$DATA_SIN"
+IFS=";" read SYN_CON SYNACK_CON HTTP_CON <<<"$DATA_CON"
+
+echo "Escenario         | SYN | SYN-ACK | HTTP Requests"
+echo "------------------|-----|---------|---------------"
+echo "Sin Seguridad     | $SYN_SIN | $SYNACK_SIN | $HTTP_SIN"
+echo "Con Seguridad     | $SYN_CON | $SYNACK_CON | $HTTP_CON"
+
+echo "-------------------------------------------------------"
+
+# 🔍 DETECCIÓN AUTOMÁTICA DE ESCENARIO
+
+if [ "$HTTP_SIN" -lt 20 ]; then
+  echo "🟡 Escenario detectado: TRÁFICO NORMAL"
+  echo "Interpretación:"
+  echo "- No hay suficiente tráfico para considerar un DDoS"
+  echo "- Las diferencias son ruido normal de TCP"
+  echo "- No se puede medir mitigación"
 else
-  EFICACIA=0
-fi
+  echo "🔴 Escenario detectado: POSIBLE ATAQUE"
 
-# Datos Con Seguridad
-echo "Con Seguridad     | $TOTAL_CON          | $RESP_CON                | $EFICACIA%"
-echo "-------------------------------------------------------"
-echo "Interpretación: El Firewall filtró $((TOTAL_SIN - TOTAL_CON)) tramas maliciosas."
+  if [ "$SYN_SIN" -gt 0 ]; then
+    DROP=$((SYN_SIN - SYN_CON))
+    EFICACIA=$(echo "scale=2; ($DROP / $SYN_SIN) * 100" | bc)
+  else
+    EFICACIA=0
+  fi
+
+  echo "Eficacia del sistema: $EFICACIA%"
+  echo "Interpretación:"
+  echo "- Reducción de SYN indica mitigación"
+fi
