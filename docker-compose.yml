@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   gaia_lab_net:
     driver: bridge
@@ -8,54 +6,48 @@ networks:
         - subnet: 10.5.0.0/24
 
 services:
-  # CAPA 1: Firewall (Sin reglas, solo forwarding)
   gaia_firewall:
-    image: alpine
+    image: alpine:3.19
     container_name: gaia_firewall
     cap_add:
       - NET_ADMIN
-    command: /bin/sh -c "apk add iptables && tail -f /dev/null"
+    command: sh -c "apk add --no-cache iptables && tail -f /dev/null"
     networks:
       gaia_lab_net:
         ipv4_address: 10.5.0.5
 
-  # CAPA 2: Antivirus (Estado base)
   gaia_antivirus:
     image: clamav/clamav:latest
     container_name: gaia_antivirus
-    networks:
-      gaia_lab_net:
     volumes:
       - ./html:/scandir:ro
+    networks:
+      gaia_lab_net:
 
-  # LA VÍCTIMA (Configuración estándar de Apache)
   victima_apache:
     image: httpd:2.4-alpine
     container_name: victima_apache
-    networks:
-      gaia_lab_net:
-        ipv4_address: 10.5.0.10
     volumes:
       - ./html:/usr/local/apache2/htdocs/
     ports:
       - "8080:80"
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.10
 
-  # HONEYPOT (Señuelo SSH)
   honeypot_gaia:
     image: cowrie/cowrie:latest
     container_name: honeypot_gaia
+    ports:
+      - "2222:2222"
     networks:
       gaia_lab_net:
         ipv4_address: 10.5.0.20
-    ports:
-      - "2222:2222"
 
-  # EL SNIFFER (Captura automática de .pcap)
-  # Reemplaza al IDS complejo por ahora
   ids_sniffer:
-    image: alpine
+    image: alpine:3.19
     container_name: ids_sniffer
-    network_mode: "host" 
+    network_mode: "host"
     volumes:
       - ./capturas_pcap:/capturas
       # Sincroniza la zona horaria con el host
