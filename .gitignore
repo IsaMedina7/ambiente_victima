@@ -1,0 +1,6 @@
+*.pcap
+*.csv
+*.tar
+logs/
+capturas_pcap/
+red_lan_default/
