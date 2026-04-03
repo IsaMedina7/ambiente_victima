@@ -1,81 +1,69 @@
 # ambiente_victima
 
-Este proyecto levanta un entorno simulado con múltiples servicios de seguridad (IDS, firewall, antivirus, honeypot y máquina víctima) usando Docker.
+---
 
-1. Clonar el repositorio
+## 1. Arquitectura del Sistema
+
+El laboratorio simula una red de defensa activa con los siguientes componentes:
+
+| Servicio | Imagen | Función | IP Interna |
+| :--- | :--- | :--- | :--- |
+| **Firewall** | `gaia_firewall` | Gestión de tráfico (iptables) y NAT. | `10.5.0.5` |
+| **Honeypot** | `cowrie/cowrie` | Trampa SSH para recolección de logs. | `10.5.0.20` |
+| **Víctima** | `httpd:alpine` | Servidor web vulnerable detrás del firewall. | `10.5.0.10` |
+| **Antivirus** | `clamav` | Escaneo de archivos en el directorio compartido. | Dinámica |
+| **IDS Sniffer** | `gaia_sniffer` | Captura de tráfico en modo host (PCAP). | Modo Host |
+
+---
+
+## 2. Estrategia "Offline First"
+
+Para evitar que los contenedores fallen al intentar descargar dependencias (`apk add`) durante el arranque, se implementó una estrategia de **Pre-construcción de Imágenes**:
+
+1. **Inyección de binarios:** Se crearon Dockerfiles específicos (`Dockerfile.firewall` y `Dockerfile.sniffer`) que instalan `iptables` y `tcpdump` durante la fase de `build`.
+2. **Eliminación de comandos dinámicos:** Se eliminaron las instrucciones `command: sh -c "apk add..."` del archivo `docker-compose.yml`, permitiendo que los servicios usen directamente los binarios ya presentes en la imagen local.
+
+---
+
+## 3. Configuración de Red y Flujo de Tráfico (NAT)
+
+El **Firewall** actúa como el único punto de entrada (Gateway). Toda la comunicación externa pasa por él antes de llegar a los servicios internos:
+
+* **Tráfico Web (8080 -> 80):** El tráfico que llega al puerto 8080 del Host es redirigido por el Firewall a la Víctima (`10.5.0.10`).
+* **Tráfico de Ataque (2222 -> 2222):** El tráfico SSH que llega al puerto 2222 del Host es redirigido por el Firewall al Honeypot (`10.5.0.20`).
+
+> **Nota Pro-Tip:** Se eliminaron los mapeos de puertos (`ports:`) directos en los servicios de la Víctima y el Honeypot para garantizar que el tráfico pase obligatoriamente por las reglas de `iptables` del Firewall.
+
+---
+
+## 4. Guía de Despliegue (Paso a Paso)
+
+Si el sistema presenta errores de "puerto ya asignado" o comandos antiguos persistentes, siga este procedimiento de **Reset Total**:
+
+### Paso 1: Limpieza Profunda
+
 ```bash
-git clone git@github.com:IsaMedina7/ambiente_victima.git
+# Detener el proyecto y borrar volúmenes/redes
+docker compose down --volumes --remove-orphans
+
+# Eliminar procesos proxy de Docker que puedan retener puertos (8080/2222)
+sudo killall docker-proxy 2>/dev/null
+
+# Limpiar redes huérfanas
+docker network prune -f
 ```
 
-2. Entrar al repositorio
+### Paso 2: Reconstrucción Local
+
 ```bash
-cd ambiente_victima
+# Construir imágenes con las herramientas ya instaladas
+docker build -t gaia_firewall -f Dockerfile.firewall .
+docker build -t gaia_sniffer -f Dockerfile.sniffer .
 ```
 
-3. Construir y levantar los contenedores
+### Paso 3: Lanzamiento Forzado
+
 ```bash
-docker compose up --build
+# Forzar la recreación para ignorar el caché de contenedores viejos
+docker compose up -d --force-recreate
 ```
-
-4. Verificar que todo esté funcionando
-```bash
-docker ps
-```
-
-Debe indicar que todos los contenedores están en estado UP.
-
-Ejemplo:
-```bash
-docker ps -a
-
-CONTAINER ID   IMAGE                  COMMAND                  CREATED          STATUS                             PORTS                                                   NAMES
-df003f420557   nicolaka/netshoot      "tail -f /dev/null"      27 seconds ago   Up 25 seconds                                                                              ids_gaia
-4218d8b07cc1   cowrie/cowrie:latest   "/cowrie/cowrie-env/…"   28 seconds ago   Up 26 seconds                      0.0.0.0:2222->2222/tcp, [::]:2222->2222/tcp, 2223/tcp   honeypot_gaia
-ed54e098d0c7   httpd:2.4-alpine       "httpd-foreground"       28 seconds ago   Up 27 seconds                      0.0.0.0:8080->80/tcp, [::]:8080->80/tcp                 victima_apache
-afdfe9ad179c   alpine                 "/bin/sh -c 'apk add…"   28 seconds ago   Up 26 seconds                                                                              gaia_firewall
-e3ed74d12f18   clamav/clamav:latest   "/init"                  28 seconds ago   Up 26 seconds (health: starting)   3310/tcp, 7357/tcp                                      gaia_antivirus
-bbc2e72e93a3   nicolaka/netshoot      "zsh"                    3 days ago       Exited (0) 3 days ago                                                                      vigilant_snyder
-```
-
-Para monitorear el comportamiento de los servicios:
-
-IDS (captura de paquetes):
-```bash
-docker exec -it ids_gaia tcpdump -i any port 80 -A -nn
-```
-
-Firewall:
-```bash
-docker exec -it gaia_firewall watch -n 1 iptables -L -v -n
-```
-
-Antivirus:
-```bash
-docker logs -f gaia_antivirus
-```
-
-Máquina víctima:
-```bash
-docker logs -f victima_apache
-```
-
-Honeypot:
-```bash
-docker logs -f honeypot_gaia
-```
-
-Métricas de hardware:
-```bash
-docker stats
-```
-
-Análisis de red (modo detallado):
-```bash
-docker exec -it ids_gaia tcpdump -i any port 80 -A -vv
-```
-
-### termshark
-´´´bash
-docker exec -it ids_gaia termshark -i any
-´´´
-

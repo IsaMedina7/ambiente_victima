@@ -7,72 +7,63 @@ networks:
 
 services:
   gaia_firewall:
-    image: alpine:3.19
+    image: gaia_firewall
     container_name: gaia_firewall
-    cap_add:
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    command: >
-      sh -c "apk add --no-cache iptables &&
-             iptables -P INPUT ACCEPT &&
-             iptables -P FORWARD ACCEPT &&
-             iptables -P OUTPUT ACCEPT &&
-             tail -f /dev/null"
+    privileged: true
+    ports:
+      - "8080:80"
+      - "2222:22"
     networks:
       gaia_lab_net:
         ipv4_address: 10.5.0.5
+    command: sh -c "iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.5.0.10:80 && iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination 10.5.0.20:2222 && iptables -t nat -A POSTROUTING -j MASQUERADE && tail -f /dev/null"
+
+  honeypot_gaia:
+    image: cowrie/cowrie:latest
+    container_name: honeypot_gaia
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.20
+
+  victima_apache:
+    image: httpd:2.4-alpine
+    container_name: victima_apache
+    networks:
+      gaia_lab_net:
+        ipv4_address: 10.5.0.10
+    volumes:
+      - ./html:/usr/local/apache2/htdocs/
+      - ./logs:/usr/local/apache2/logs/
+    # Usamos una sintaxis de comando más robusta para Alpine
+    command: >
+      sh -c "
+      echo 'ExtendedStatus On' > /usr/local/apache2/conf/extra/status.conf &&
+      echo '<Location /server-status>' >> /usr/local/apache2/conf/extra/status.conf &&
+      echo '    SetHandler server-status' >> /usr/local/apache2/conf/extra/status.conf &&
+      echo '    Require all granted' >> /usr/local/apache2/conf/extra/status.conf &&
+      echo '</Location>' >> /usr/local/apache2/conf/extra/status.conf &&
+      sed -i 's|#Include conf/extra/httpd-info.conf|Include conf/extra/status.conf|' /usr/local/apache2/conf/httpd.conf &&
+      httpd-foreground"
 
   gaia_antivirus:
-    image: clamav/clamav:latest
+    image: clamav/clamav:stable
     container_name: gaia_antivirus
     security_opt:
       - no-new-privileges:true
     volumes:
       - ./html:/scandir:ro
     networks:
-      gaia_lab_net:
-
-  victima_apache:
-    image: httpd:2.4-alpine
-    container_name: victima_apache
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    volumes:
-      - ./html:/usr/local/apache2/htdocs/:ro
-    ports:
-      - "8080:80"
-    networks:
-      gaia_lab_net:
-        ipv4_address: 10.5.0.10
-
-  honeypot_gaia:
-    image: cowrie/cowrie:latest
-    container_name: honeypot_gaia
-    security_opt:
-      - no-new-privileges:true
-    ports:
-      - "2222:2222"
-    networks:
-      gaia_lab_net:
-        ipv4_address: 10.5.0.20
+    - gaia_lab_net
 
   ids_sniffer:
-    image: alpine:3.19
+    image: gaia_sniffer
     container_name: ids_sniffer
     network_mode: "host"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     volumes:
       - ./capturas_pcap:/capturas
-      # Sincroniza la zona horaria con el host
       - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    command: >
-      sh -c "apk add --no-cache tcpdump && 
-             NAME=$$(date +%Y-%m-%d_%H-%M-%S) &&
-             tcpdump -i any -w /capturas/$$NAME.pcap"
     depends_on:
       - victima_apache
