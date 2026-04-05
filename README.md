@@ -1,69 +1,88 @@
-# ambiente_victima
+# 🛡️ GAIA: Laboratorio de Defensa Activa e ID
+
+Este proyecto despliega un entorno de red virtualizado diseñado para la simulación de ataques y análisis de tráfico (PCAP). La arquitectura integra capas de defensa (Firewall/Antivirus) y sistemas de engaño (Honeypot) en una infraestructura aislada.
 
 ---
 
-## 1. Arquitectura del Sistema
+## 1. Arquitectura del Sistema y Red LAN (`10.5.0.0/24`)
 
-El laboratorio simula una red de defensa activa con los siguientes componentes:
+El laboratorio utiliza una red tipo `bridge` denominada `gaia_lab_net`. La configuración está diseñada para que el tráfico externo sea auditado antes de tocar los servicios críticos.
 
-| Servicio | Imagen | Función | IP Interna |
-| :--- | :--- | :--- | :--- |
-| **Firewall** | `gaia_firewall` | Gestión de tráfico (iptables) y NAT. | `10.5.0.5` |
-| **Honeypot** | `cowrie/cowrie` | Trampa SSH para recolección de logs. | `10.5.0.20` |
-| **Víctima** | `httpd:alpine` | Servidor web vulnerable detrás del firewall. | `10.5.0.10` |
-| **Antivirus** | `clamav` | Escaneo de archivos en el directorio compartido. | Dinámica |
-| **IDS Sniffer** | `gaia_sniffer` | Captura de tráfico en modo host (PCAP). | Modo Host |
-
----
-
-## 2. Estrategia "Offline First"
-
-Para evitar que los contenedores fallen al intentar descargar dependencias (`apk add`) durante el arranque, se implementó una estrategia de **Pre-construcción de Imágenes**:
-
-1. **Inyección de binarios:** Se crearon Dockerfiles específicos (`Dockerfile.firewall` y `Dockerfile.sniffer`) que instalan `iptables` y `tcpdump` durante la fase de `build`.
-2. **Eliminación de comandos dinámicos:** Se eliminaron las instrucciones `command: sh -c "apk add..."` del archivo `docker-compose.yml`, permitiendo que los servicios usen directamente los binarios ya presentes en la imagen local.
+| Servicio | Imagen | IP Estática | Puertos (Host) | Función Principal |
+| :--- | :--- | :--- | :--- | :--- |
+| **gaia_firewall** | `gaia_firewall` | `10.5.0.5` | `8080`, `2222` | Gestión de tráfico (iptables), NAT y Gateway. |
+| **victima_apache** | `httpd:alpine` | `10.5.0.10` | Interno (80) | Servidor web objetivo detrás del firewall. |
+| **honeypot_gaia** | `cowrie/cowrie` | `10.5.0.20` | **`2223`** | Trampa SSH directa para recolección de logs puros. |
+| **gaia_antivirus** | `clamav` | Dinámica | Interno | Escaneo de malware en volumen compartido `/html`. |
+| **ids_sniffer** | `gaia_sniffer` | Modo Host | N/A | Captura de tráfico crudo (PCAP) para dataset de IA. |
 
 ---
 
-## 3. Configuración de Red y Flujo de Tráfico (NAT)
+## 2. Estrategia "Offline First" y Construcción
 
-El **Firewall** actúa como el único punto de entrada (Gateway). Toda la comunicación externa pasa por él antes de llegar a los servicios internos:
+Para garantizar la estabilidad en entornos de laboratorio y evitar fallos por descargas fallidas en tiempo de ejecución:
 
-* **Tráfico Web (8080 -> 80):** El tráfico que llega al puerto 8080 del Host es redirigido por el Firewall a la Víctima (`10.5.0.10`).
-* **Tráfico de Ataque (2222 -> 2222):** El tráfico SSH que llega al puerto 2222 del Host es redirigido por el Firewall al Honeypot (`10.5.0.20`).
-
-> **Nota Pro-Tip:** Se eliminaron los mapeos de puertos (`ports:`) directos en los servicios de la Víctima y el Honeypot para garantizar que el tráfico pase obligatoriamente por las reglas de `iptables` del Firewall.
+1.  **Inyección de Binarios:** Las herramientas esenciales (`iptables`, `tcpdump`) se instalan durante la fase de `build` mediante los Dockerfiles específicos (`Dockerfile.firewall` y `Dockerfile.sniffer`).
+2.  **Ejecución Local:** Se eliminaron los comandos dinámicos del `docker-compose.yml`, permitiendo que los servicios arranquen instantáneamente usando los binarios pre-instalados en las imágenes locales.
 
 ---
 
-## 4. Guía de Despliegue (Paso a Paso)
+## 3. Configuración de Red y Flujo de Tráfico
 
-Si el sistema presenta errores de "puerto ya asignado" o comandos antiguos persistentes, siga este procedimiento de **Reset Total**:
+### El Rol del Firewall (NAT)
+El **Firewall** actúa como el único punto de entrada controlado para la víctima:
+* **Tráfico Web (8080 -> 80):** El tráfico que llega al puerto `8080` del Host es redirigido por el Firewall a la Víctima (`10.5.0.10`).
+* **Tráfico Administrativo (2222 -> 22):** Redirección segura para la gestión del contenedor firewall.
 
-### Paso 1: Limpieza Profunda
+### Acceso al Honeypot (Estrategia de Engaño)
+* **Puerto 2223 (Directo):** Se ha mapeado el puerto `2223` del Host directamente al Honeypot. Esto permite capturar ataques "puros" que no han sido filtrados o modificados por el Firewall, proporcionando datos de mayor calidad.
+
+---
+
+## 4. Guía de Despliegue y Reset Total
+
+Si el sistema presenta errores de "puerto ya asignado" (`Bind for 0.0.0.0:2222 failed`) o persisten comportamientos de versiones antiguas, siga este procedimiento:
+
+### Paso 1: Limpieza Profunda de Residuos
 
 ```bash
-# Detener el proyecto y borrar volúmenes/redes
+# 1. Detener el proyecto y borrar volúmenes/redes
 docker compose down --volumes --remove-orphans
 
-# Eliminar procesos proxy de Docker que puedan retener puertos (8080/2222)
+# 2. Eliminar procesos zombie de Docker que bloquean puertos (2222, 8080)
+sudo kill -9 $(sudo lsof -t -i:2222) 2>/dev/null
 sudo killall docker-proxy 2>/dev/null
 
-# Limpiar redes huérfanas
+# 3. Limpiar redes huérfanas
 docker network prune -f
 ```
 
-### Paso 2: Reconstrucción Local
+### Paso 2: Reconstrucción de Imágenes
 
 ```bash
-# Construir imágenes con las herramientas ya instaladas
+# Construir las imágenes con las herramientas ya integradas
 docker build -t gaia_firewall -f Dockerfile.firewall .
 docker build -t gaia_sniffer -f Dockerfile.sniffer .
 ```
 
-### Paso 3: Lanzamiento Forzado
+### Paso 3: Lanzamiento
 
 ```bash
-# Forzar la recreación para ignorar el caché de contenedores viejos
+# Forzar la recreación de contenedores
 docker compose up -d --force-recreate
 ```
+
+## 📂 Estructura de Datos y Monitoreo
+
+- /capturas_pcap: Almacena los archivos .pcap generados por el sniffer.
+- /html: Directorio compartido; cualquier archivo aquí será escaneado por el Antivirus.
+- /logs: Logs de acceso de Apache para monitorear el éxito de ataques como GoldenEye.
+
+## ✅ Verificación del Laboratorio
+
+1. **Víctima:** `curl http://localhost:8080` (Debe responder el Apache).
+2. **Honeypot:** `ssh root@localhost -p 2223` (Debe pedir password de Cowrie).
+3. **Sniffer:** Verifica que aparezca un archivo nuevo en `./capturas_pcap/` tras realizar los comandos anteriores.
+
+---
+Desarrollado por el Grupo de Investigación GAIA - Universidad Nacional de Colombia.

@@ -20,6 +20,8 @@ services:
 
   honeypot_gaia:
     image: cowrie/cowrie:latest
+    ports:
+      - "2223:2222"
     container_name: honeypot_gaia
     networks:
       gaia_lab_net:
