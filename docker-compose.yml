@@ -28,27 +28,27 @@ services:
       - "2222:2222"
 
     command: >
-        sh -c "
-        # 1. Activación de ruteo
-        echo 1 > /proc/sys/net/ipv4/ip_forward;
+      sh -c "
+      # 1. Habilitar el reenvío de paquetes (Vital para que funcione como Router)
+      echo 1 > /proc/sys/net/ipv4/ip_forward;
 
-        # 2. Política de seguridad máxima (Nada pasa si no lo digo yo)
-        iptables -P FORWARD DROP;
+      # 2. Definir políticas por defecto (Fail-Closed)
+      # Bloqueamos todo el tráfico de paso por defecto
+      iptables -P FORWARD DROP;
 
+      # 3. Permitir el tráfico que YA está establecido (Para no romper conexiones abiertas)
+      iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT;
 
-        # 3. Mantenimiento de conexiones (La regla que permite la respuesta de la víctima)
-        iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT;
+      # 4. Abrir la válvula específica para la Víctima (DNAT)
+      iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.6.0.10:80;
+      
+      # 5. Permitir explícitamente el paso hacia la víctima en el puerto 80
+      iptables -A FORWARD -p tcp -d 10.6.0.10 --dport 80 -j ACCEPT;
 
-        # 4. Apertura del puerto 80 hacia la víctima
-        iptables -A FORWARD -p tcp -d 10.6.0.10 --dport 80 -j ACCEPT;
+      # 6. Enmascarar la salida para que la víctima pueda responder
+      iptables -t nat -A POSTROUTING -j MASQUERADE;
 
-        # 5. Redirección de tráfico (DNAT)
-        iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.6.0.10:80;
-
-        # 6. Salida a internet (Masquerade)
-        iptables -t nat -A POSTROUTING -j MASQUERADE;
-
-        tail -f /dev/null"
+      tail -f /dev/null"
 
   honeypot_gaia:
     image: cowrie/cowrie:latest
