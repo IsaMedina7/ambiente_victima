@@ -1,71 +1,105 @@
+version: '3.8'
+
 networks:
-  gaia_lab_net:
-    driver: bridge
+  dmz_net:
     ipam:
       config:
         - subnet: 10.5.0.0/24
+  internal_net:
+    ipam:
+      config:
+        - subnet: 10.6.0.0/24
 
 services:
   gaia_firewall:
     image: gaia_firewall
     container_name: gaia_firewall
+
     privileged: true
-    ports:
-      - "8080:80"
-      - "2222:22"
+
     networks:
-      gaia_lab_net:
+      dmz_net:
         ipv4_address: 10.5.0.5
-    command: sh -c "iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.5.0.10:80 && iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination 10.5.0.20:2222 && iptables -t nat -A POSTROUTING -j MASQUERADE && tail -f /dev/null"
+      internal_net:
+        ipv4_address: 10.6.0.5
+    ports:
+
+      - "8080:80"
+      - "2222:2222"
+
+    command: >
+        sh -c "
+        # 1. Activación de ruteo
+        echo 1 > /proc/sys/net/ipv4/ip_forward;
+
+        # 2. Política de seguridad máxima (Nada pasa si no lo digo yo)
+        iptables -P FORWARD DROP;
+
+
+        # 3. Mantenimiento de conexiones (La regla que permite la respuesta de la víctima)
+        iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT;
+
+        # 4. Apertura del puerto 80 hacia la víctima
+        iptables -A FORWARD -p tcp -d 10.6.0.10 --dport 80 -j ACCEPT;
+
+        # 5. Redirección de tráfico (DNAT)
+        iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.6.0.10:80;
+
+        # 6. Salida a internet (Masquerade)
+        iptables -t nat -A POSTROUTING -j MASQUERADE;
+
+        tail -f /dev/null"
 
   honeypot_gaia:
     image: cowrie/cowrie:latest
-    ports:
-      - "2223:2222"
     container_name: honeypot_gaia
     networks:
-      gaia_lab_net:
-        ipv4_address: 10.5.0.20
+      dmz_net:
+        ipv4_address: 10.5.0.20 # EXPUESTO (Sin pasar por el Firewall)
+    ports:
+      - "2223:2222"  # El 2225 es tu nueva puerta de entrada
 
   victima_apache:
     image: httpd:2.4-alpine
     container_name: victima_apache
     networks:
-      gaia_lab_net:
-        ipv4_address: 10.5.0.10
+      internal_net:
+        ipv4_address: 10.6.0.10 # PROTEGIDO (No tiene red externa)
     volumes:
       - ./html:/usr/local/apache2/htdocs/
-      - ./logs:/usr/local/apache2/logs/
-    # Usamos una sintaxis de comando más robusta para Alpine
-    command: >
-      sh -c "
-      echo 'ExtendedStatus On' > /usr/local/apache2/conf/extra/status.conf &&
-      echo '<Location /server-status>' >> /usr/local/apache2/conf/extra/status.conf &&
-      echo '    SetHandler server-status' >> /usr/local/apache2/conf/extra/status.conf &&
-      echo '    Require all granted' >> /usr/local/apache2/conf/extra/status.conf &&
-      echo '</Location>' >> /usr/local/apache2/conf/extra/status.conf &&
-      sed -i 's|#Include conf/extra/httpd-info.conf|Include conf/extra/status.conf|' /usr/local/apache2/conf/httpd.conf &&
-      httpd-foreground"
+      - ./my_httpd.conf:/usr/local/apache2/conf/httpd.conf
+      - ./apache_config/httpd-info.conf:/usr/local/apache2/conf/extra/httpd-info.conf
 
-  gaia_antivirus:
-    image: clamav/clamav:stable
-    container_name: gaia_antivirus
-    security_opt:
-      - no-new-privileges:true
+  gaia_ids_app:
+    # image: python:3.8.5
+    image: gaia_ids_app_local
+
+    container_name: gaia_ids_app
     volumes:
-      - ./html:/scandir:ro
+      - ./flask_app_tesis:/app
+    working_dir: /app
+
     networks:
-    - gaia_lab_net
+      dmz_net:
+        ipv4_address: 10.5.0.50
+    ports:
+      - "5000:5000"
+    # Quitamos "flask_app_tesis/" de la ruta porque ya estamos dentro de /app
+    command: >
+      sh -c "python app.py || 
+             tail -f /dev/null"
 
   ids_sniffer:
-    image: gaia_sniffer
+    build: 
+      context: .
+      dockerfile: Dockerfile.sniffer
     container_name: ids_sniffer
-    network_mode: "host"
+    network_mode: "host" 
+    privileged: true
     cap_add:
       - NET_RAW
       - NET_ADMIN
     volumes:
-      - ./capturas_pcap:/capturas
+      - ./flask_app_tesis:/capturas 
       - /etc/localtime:/etc/localtime:ro
-    depends_on:
-      - victima_apache
+    restart: always

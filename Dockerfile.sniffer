@@ -1,7 +1,7 @@
 # Dockerfile.sniffer
-FROM alpine:3.19
+FROM alpine:3.8.5
 
 RUN apk add --no-cache tcpdump
 
-CMD ["sh", "-c", "NAME=$(date +%Y-%m-%d_%H-%M-%S) && tcpdump -i any -w /capturas/$NAME.pcap"]
-# CMD ["sh","-c", "apk add --no-cache tcpdump && NAME=$$(date +%Y-%m-%d_%H-%M-%S) && tcpdump -i any -w /capturas/$$NAME.pcap"]
+# Usamos un script pequeño para que el nombre del archivo sea dinámico al arrancar
+CMD ["sh", "-c", "FILE=$(date +'%Y%m%d_%H%M%S').pcap; tcpdump -i any -U -w /capturas/$FILE & while true; do chmod 666 /capturas/$FILE; sleep 5; done"]
