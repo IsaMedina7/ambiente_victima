@@ -1,0 +1,25 @@
+# Dockerfile.honeypot
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+  libssl-dev \
+  libffi-dev \
+  build-essential \
+  git \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+  flask \
+  twisted \
+  cryptography \
+  bcrypt \
+  pyasn1 \
+  service_identity
+
+WORKDIR /honeypot
+
+COPY honeypot_http.py /honeypot/honeypot_http.py
+
+EXPOSE 80 2222
+
+CMD ["python3", "honeypot_http.py"]

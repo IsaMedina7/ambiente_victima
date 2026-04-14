@@ -4,4 +4,4 @@ FROM alpine:3.8.5
 RUN apk add --no-cache tcpdump
 
 # Usamos un script pequeño para que el nombre del archivo sea dinámico al arrancar
-CMD ["sh", "-c", "FILE=$(date +'%Y%m%d_%H%M%S').pcap; tcpdump -i any -U -w /capturas/$FILE & while true; do chmod 666 /capturas/$FILE; sleep 5; done"]
+CMD ["sh", "-c", "FILE=$(date +'%Y%m%d_%H%M%S')_${PREFIX}.pcap; tcpdump -i any -U -w /capturas/$FILE & while true; do chmod 666 /capturas/$FILE; sleep 5; done"]

@@ -3,4 +3,8 @@ FROM alpine:3.19
 
 RUN apk add --no-cache iptables
 
-CMD ["sh", "-c", "iptables -P INPUT ACCEPT && tail -f /dev/null"]
+# Copiar script de configuración del firewall
+COPY firewall-rules.sh /usr/local/bin/firewall-rules.sh
+RUN chmod +x /usr/local/bin/firewall-rules.sh
+
+CMD ["/usr/local/bin/firewall-rules.sh"]

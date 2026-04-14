@@ -161,67 +161,81 @@
   </div>
   <script>
     const tag = document.getElementById('tag');
-    const status = document.getElementById('status');
-    const val = document.getElementById('val');
-    const connsDisp = document.getElementById('conns');
+const status = document.getElementById('status');
+const val = document.getElementById('val');
+const connsDisp = document.getElementById('conns');
 
-    async function updateMonitor() {
-      const startTime = Date.now();
-      try {
-        // Fetching real-time Apache metrics
-        const res = await fetch('/server-status?auto', {cache: 'no-store'});
-        if (!res.ok) throw new Error();
+// AbortController para evitar que las peticiones se amontonen si el servidor tarda
+let controller;
 
-        const text = await res.text();
-        const rtt = Date.now() - startTime;
+async function updateMonitor() {
+  if (controller) controller.abort(); 
+  controller = new AbortController();
 
-        // Extracting BusyWorkers (Real active connections)
-        const busyMatch = text.match(/BusyWorkers:\s(\d+)/);
-        const currentConns = busyMatch ? parseInt(busyMatch[1]) : 1;
+  const startTime = Date.now();
+  
+  try {
+    // 1. Añadimos un timeout real a la petición
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-        renderUI(rtt, currentConns);
-      } catch (e) {
-        // Connection failure or timeout (Server down/saturated)
-        renderUI(3000, 999);
-      }
-      setTimeout(updateMonitor, 1000);
+    const res = await fetch('/server-status?auto', {
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error();
+
+    const text = await res.text();
+    const rtt = Date.now() - startTime;
+
+    // 2. Extracción más robusta de BusyWorkers
+    const busyMatch = text.match(/BusyWorkers:\s(\d+)/);
+    const currentConns = busyMatch ? parseInt(busyMatch[1]) : 0;
+
+    renderUI(rtt, currentConns);
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      renderUI(3000, 999); // Error de conexión
     }
+  } finally {
+    // 3. RECURSIÓN SEGURA: Solo programa la siguiente ejecución 
+    // DESPUÉS de que esta haya terminado o fallado.
+    setTimeout(updateMonitor, 2000); // Aumentamos a 2s para reducir ruido en el pcap
+  }
+}
 
-    function renderUI(ms, conns) {
-      val.innerText = ms + "ms";
-      connsDisp.innerText = conns;
+function renderUI(ms, conns) {
+  val.innerText = `${ms}ms`;
+  connsDisp.innerText = conns;
 
-      let hue, freq, dev, st, txt, bg;
+  let hue, freq, dev, st, txt, bg;
 
-      // SENSITIVITY LOGIC
-      // Safe: Low latency (<30ms) AND low connections (<5)
-      if (ms < 30 && conns < 5) {
-        hue = 190; freq = "1.5s"; dev = "0px";
-        st = "STATUS: OPTIMAL"; txt = "GAIA"; bg = "#050508";
-      }
-      // Warning: Moderate latency OR unusual connection spike
-      else if (ms < 200 && conns < 40) {
-        hue = 280; freq = "0.6s"; dev = "4px";
-        st = "STATUS: UNSTABLE TRAFFIC"; txt = "G_A_I_A"; bg = "#0a0510";
-      }
-      // Critical: High latency OR mass connection flood (DDoS)
-      else {
-        hue = 0; freq = "0.1s"; dev = "12px";
-        st = "STATUS: CRITICAL FAILURE"; txt = "VOID_ERR"; bg = "#150505";
-      }
 
-      const root = document.documentElement;
-      root.style.setProperty('--color', `hsl(${hue}, 100%, 50%)`);
-      root.style.setProperty('--brillo', `hsl(${hue}, 100%, 40%)`);
-      root.style.setProperty('--frecuencia', freq);
-      root.style.setProperty('--desvio', dev);
-      root.style.setProperty('--bg', bg);
+  // Ajuste de umbrales para evitar falsos positivos por ruido doméstico
+  if (ms < 100 && conns < 15) { // Más tolerancia para red de hogar
+    hue = 190; freq = "1.5s"; dev = "0px";
+    st = "STATUS: OPTIMAL"; txt = "GAIA"; bg = "#050508";
+  } else if (ms < 500 && conns < 100) {
+    hue = 280; freq = "0.6s"; dev = "4px";
+    st = "STATUS: UNSTABLE TRAFFIC"; txt = "G_A_I_A"; bg = "#0a0510";
+  } else {
+    hue = 0; freq = "0.1s"; dev = "12px";
+    st = "STATUS: CRITICAL FAILURE"; txt = "VOID_ERR"; bg = "#150505";
+  }
 
-      tag.innerText = txt;
-      status.innerText = st;
-    }
+  const root = document.documentElement;
+  root.style.setProperty('--color', `hsl(${hue}, 100%, 50%)`);
+  root.style.setProperty('--brillo', `hsl(${hue}, 100%, 40%)`);
+  root.style.setProperty('--frecuencia', freq);
+  root.style.setProperty('--desvio', dev);
+  root.style.setProperty('--bg', bg);
 
-    updateMonitor();
+  tag.innerText = txt;
+  status.innerText = st;
+}
+
+updateMonitor();
   </script>
 </body>
 

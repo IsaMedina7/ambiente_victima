@@ -1,89 +1,55 @@
 version: '3.8'
 
 networks:
-  dmz_net:
+  flat_net:
     ipam:
       config:
-        - subnet: 10.5.0.0/24
-  internal_net:
-    ipam:
-      config:
-        - subnet: 10.6.0.0/24
+        - subnet: 10.9.0.0/24
 
 services:
-  gaia_firewall:
-    image: gaia_firewall
-    container_name: gaia_firewall
-
-    privileged: true
-
-    networks:
-      dmz_net:
-        ipv4_address: 10.5.0.5
-      internal_net:
-        ipv4_address: 10.6.0.5
-    ports:
-
-      - "8080:80"
-      - "2222:2222"
-
-    command: >
-      sh -c "
-      echo 1 > /proc/sys/net/ipv4/ip_forward;
-      iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.6.0.10:80;
-      iptables -t nat -A POSTROUTING -j MASQUERADE;
-      tail -f /dev/null"
-
-  honeypot_gaia:
-    image: cowrie/cowrie:latest
-    container_name: honeypot_gaia
-    networks:
-      dmz_net:
-        ipv4_address: 10.5.0.20 # EXPUESTO (Sin pasar por el Firewall)
-    ports:
-      - "2223:2222"  # El 2225 es tu nueva puerta de entrada
 
   victima_apache:
     image: httpd:2.4-alpine
     container_name: victima_apache
     networks:
-      internal_net:
-        ipv4_address: 10.6.0.10 # PROTEGIDO (No tiene red externa)
+      flat_net:
+        ipv4_address: 10.9.0.10
+    ports:
+      - "8080:80"   # Ahora sí es accesible directamente
     volumes:
       - ./html:/usr/local/apache2/htdocs/
       - ./my_httpd.conf:/usr/local/apache2/conf/httpd.conf
       - ./apache_config/httpd-info.conf:/usr/local/apache2/conf/extra/httpd-info.conf
 
   gaia_ids_app:
-    # image: python:3.8.5
+    build:
+      context: .
+      dockerfile: Dockerfile.app
     image: gaia_ids_app_local
-
     container_name: gaia_ids_app
     volumes:
       - ./flask_app_tesis:/app
     working_dir: /app
-
     networks:
-      dmz_net:
-        ipv4_address: 10.5.0.50
-    ports:
-      - "5000:5000"
-    # Quitamos "flask_app_tesis/" de la ruta porque ya estamos dentro de /app
+      flat_net:
+        ipv4_address: 10.9.0.50
     command: >
       sh -c "python app.py || 
              tail -f /dev/null"
 
-  ids_sniffer:
+  # Sniffer pegado a la víctima (ve TODO el tráfico que llega)
+  sniffer:
     build: 
       context: .
       dockerfile: Dockerfile.sniffer
-    container_name: ids_sniffer
-    network_mode: "host" 
+    container_name: sniffer
     privileged: true
     cap_add:
       - NET_RAW
       - NET_ADMIN
+    network_mode: "service:victima_apache"
     volumes:
-      - ./flask_app_tesis:/capturas 
-      - /etc/localtime:/etc/localtime:ro
+      - ./flask_app_tesis:/capturas
     restart: always
+    environment:
+      - PREFIX=FLAT

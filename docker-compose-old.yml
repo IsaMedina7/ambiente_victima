@@ -1,0 +1,143 @@
+version: '3.8'
+
+networks:
+  dmz_net:
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24
+  internal_net:
+    ipam:
+      config:
+        - subnet: 10.6.0.0/24
+
+services:
+  gaia_firewall:
+    image: gaia_firewall
+    container_name: gaia_firewall
+    build:
+      context: .
+      dockerfile: Dockerfile.firewall
+    privileged: true
+    networks:
+      dmz_net:
+        ipv4_address: 10.5.0.5
+      internal_net:
+        ipv4_address: 10.6.0.5
+    ports:
+      - "8080:80"
+      - "2222:2222"
+      - "5000:5000"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "iptables", "-L", "-n"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  honeypot_gaia:
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    container_name: honeypot_gaia
+    networks:
+      dmz_net:
+        ipv4_address: 10.5.0.20
+    ports:
+      - "8081:80"    # HTTP honeypot (accesible)
+      - "2223:2222"  # SSH honeypot (opcional)
+    volumes:
+      - ./logs:/honeypot/logs  # Logs compartidos con el proyecto
+
+    restart: unless-stopped
+
+  victima_apache:
+    image: httpd:2.4-alpine
+    container_name: victima_apache
+    networks:
+      internal_net:
+        ipv4_address: 10.6.0.10 # PROTEGIDO (No tiene red externa)
+    volumes:
+      - ./html:/usr/local/apache2/htdocs/
+      - ./my_httpd.conf:/usr/local/apache2/conf/httpd.conf
+      - ./apache_config/httpd-info.conf:/usr/local/apache2/conf/extra/httpd-info.conf
+    depends_on:
+      - gaia_firewall
+
+  gaia_ids_app:
+    # image: python:3.8.5
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: gaia_ids_app_local
+    container_name: gaia_ids_app
+    volumes:
+      - ./flask_app_tesis:/app
+    working_dir: /app
+
+    networks:
+      dmz_net:
+        ipv4_address: 10.5.0.50
+    # ports:
+    #   - "5000:5000"
+    # Quitamos "flask_app_tesis/" de la ruta porque ya estamos dentro de /app
+    command: >
+      sh -c "python app.py || 
+             tail -f /dev/null"
+    depends_on:
+      - gaia_firewall
+
+  # ids_sniffer:
+  #   build: 
+  #     context: .
+  #     dockerfile: Dockerfile.sniffer
+  #   container_name: ids_sniffer
+  #   network_mode: "host" 
+  #   privileged: true
+  #   cap_add:
+  #     - NET_RAW
+  #     - NET_ADMIN
+  #   volumes:
+  #     - ./flask_app_tesis:/capturas 
+  #     - /etc/localtime:/etc/localtime:ro
+  #   restart: always
+
+  # SNIFFER DMZ: Se pega al Honeypot para ver lo que le llega a él
+  sniffer_dmz:
+    build: 
+      context: .
+
+      dockerfile: Dockerfile.sniffer
+    container_name: sniffer_dmz
+    privileged: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    # CAMBIO CLAVE: Comparte la red directamente con el honeypot
+    network_mode: "service:honeypot_gaia" 
+    volumes:
+      - ./flask_app_tesis:/capturas
+    restart: always
+    environment:
+      - PREFIX=DMZ
+
+  # SNIFFER INTERNAL: Se pega a la Victima para ver lo que llega detrás del firewall
+  sniffer_internal:
+    build: 
+      context: .
+      dockerfile: Dockerfile.sniffer
+    container_name: sniffer_internal
+    privileged: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    # CAMBIO CLAVE: Comparte la red directamente con la victima
+
+    network_mode: "service:victima_apache"
+    volumes:
+      - ./flask_app_tesis:/capturas
+    restart: always
+    environment:
+      - PREFIX=INT
