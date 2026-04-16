@@ -25,7 +25,7 @@ services:
         ipv4_address: 10.6.0.5
     ports:
       - "8080:80"
-      - "2222:2222"
+      #- "2222:2222"
       - "5000:5000"
     cap_add:
       - NET_ADMIN
@@ -47,7 +47,7 @@ services:
         ipv4_address: 10.5.0.20
     ports:
       - "8081:80"    # HTTP honeypot (accesible)
-      - "2223:2222"  # SSH honeypot (opcional)
+      #- "2223:2222"  # SSH honeypot (opcional)
     volumes:
       - ./logs:/honeypot/logs  # Logs compartidos con el proyecto
 
